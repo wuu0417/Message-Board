@@ -1,43 +1,56 @@
-let messages = []; // 留言存储在内存中
+import { createClient } from "@vercel/edge-config";
 
-export default function handler(req, res) {
-  // 设置跨域头
+const edgeConfig = createClient({
+  token: "375e55d2-d626-40bb-8b28-ce7447b87b7c", // 替换为你的 Edge Config Token
+});
+
+export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // 处理 OPTIONS 预检请求
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
 
-  if (req.method === "GET") {
-    // 返回所有留言
-    return res.status(200).json(messages);
-  } else if (req.method === "POST") {
-    // 添加新留言
-    const { content, userId } = req.body;
-    if (!content || !userId) {
-      return res.status(400).json({ error: "留言内容和用户ID不能为空" });
-    }
-    const newMessage = { id: Date.now(), content, userId, timestamp: new Date() }; // 关联用户ID
-    messages.push(newMessage);
-    return res.status(201).json(newMessage);
-  } else if (req.method === "DELETE") {
-    // 删除留言
-    const { id, userId } = req.body; // 获取留言ID和用户ID
-    const message = messages.find((msg) => msg.id === id);
+  try {
+    const messages = (await edgeConfig.get("messages")) || [];
 
-    if (!message) {
-      return res.status(404).json({ error: "留言不存在" });
-    }
-    if (message.userId !== userId) {
-      return res.status(403).json({ error: "无权限删除该留言" });
+    if (req.method === "GET") {
+      return res.status(200).json(messages);
     }
 
-    messages = messages.filter((msg) => msg.id !== id); // 删除留言
-    return res.status(200).json({ success: true });
-  } else {
+    if (req.method === "POST") {
+      const { username, content } = req.body;
+
+      if (!username || !content) {
+        return res.status(400).json({ error: "用户名和内容不能为空" });
+      }
+
+      const newMessage = { id: Date.now(), username, content };
+      messages.push(newMessage);
+      await edgeConfig.set("messages", messages);
+
+      return res.status(201).json(newMessage);
+    }
+
+    if (req.method === "DELETE") {
+      const { id, username } = req.body;
+
+      const index = messages.findIndex(
+        (msg) => msg.id === id && msg.username === username
+      );
+      if (index === -1) {
+        return res.status(404).json({ error: "留言不存在或无权限删除" });
+      }
+
+      messages.splice(index, 1);
+      await edgeConfig.set("messages", messages);
+
+      return res.status(200).json({ success: true });
+    }
+
     return res.status(405).json({ error: "不支持的方法" });
+  } catch (error) {
+    console.error("服务器错误:", error);
+    return res.status(500).json({ error: "服务器错误" });
   }
 }
